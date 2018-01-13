@@ -267,6 +267,8 @@ sub take_snapshots {
 	my $forcecacheupdate = 0;
 
 	my @newsnaps;
+	my %prescripts;
+	my %postscripts;
 
 	if ($args{'verbose'}) { print "INFO: taking snapshots...\n"; }
 	foreach my $section (keys %config) {
@@ -336,7 +338,14 @@ sub take_snapshots {
 					# update to most current possible datestamp
 					%datestamp = get_date();
 					# print "we should have had a $type snapshot of $path $maxage seconds ago; most recent is $newestage seconds old.\n";
-					push(@newsnaps, "$path\@autosnap_$datestamp{'sortable'}_$type");
+					my $snap = "$path\@autosnap_$datestamp{'sortable'}_$type";
+					push(@newsnaps, $snap);
+					if ($config{$section}{'prescript'})  {
+						$prescripts{$snap} = $config{$section}{'prescript'};
+					}
+					if ($config{$section}{'postscript'}) {
+						$postscripts{$snap} = $config{$section}{'postscript'};
+					}
 				}
 			}
 		}
@@ -344,12 +353,26 @@ sub take_snapshots {
 
 	if ( (scalar(@newsnaps)) > 0) {
 		foreach my $snap ( @newsnaps ) {
+			if ($prescripts{$snap}) {
+				if ($args{'verbose'}) { print "executing prescript '$prescripts{$snap} $snap'\n"; }
+				if (!$args{'readonly'}) {
+					system($prescripts{$snap}, "$snap") == 0
+						or warn "CRITICAL ERROR: prescript '$prescripts{$snap} $snap' failed, $?" and next;
+				}
+			}
 			if ($args{'verbose'}) { print "taking snapshot $snap\n"; }
 			if (!$args{'readonly'}) {
 				system($zfs, "snapshot", "$snap") == 0
 					or warn "CRITICAL ERROR: $zfs snapshot $snap failed, $?";
 				# make sure we don't end up with multiple snapshots with the same ctime
 				sleep 1;
+			}
+			if ($postscripts{$snap}) {
+				if ($args{'verbose'}) { print "executing postscript '$postscripts{$snap} $snap'\n"; }
+				if (!$args{'readonly'}) {
+					system($postscripts{$snap}, "$snap") == 0
+						or warn "CRITICAL ERROR: postscript '$postscripts{$snap} $snap' failed, $?" and next;
+				}
 			}
 		}
 		$forcecacheupdate = 1;
