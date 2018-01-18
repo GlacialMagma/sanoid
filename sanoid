@@ -5,6 +5,7 @@
 # project's Git repository at https://github.com/jimsalterjrs/sanoid/blob/master/LICENSE.
 
 $::VERSION = '1.4.17';
+my $MINIMUM_DEFAULTS_VERSION = 2;
 
 use strict;
 use warnings;
@@ -121,12 +122,13 @@ sub monitor_snapshots {
 		my $path = $config{$section}{'path'};
 		push @paths, $path;
 
-		my @types = ('yearly','monthly','daily','hourly');
+		my @types = ('yearly','monthly','daily','hourly','frequently');
 		foreach my $type (@types) {
 
 			my $smallerperiod = 0;
 			# we need to set the period length in seconds first
-			if ($type eq 'hourly') { $smallerperiod = 60; }
+			if ($type eq 'frequently') { $smallerperiod = 1; }
+			elsif ($type eq 'hourly') { $smallerperiod = 60; }
 			elsif ($type eq 'daily') { $smallerperiod = 60*60; }
 			elsif ($type eq 'monthly') { $smallerperiod = 60*60*24; }
 			elsif ($type eq 'yearly') { $smallerperiod = 60*60*24; }
@@ -200,7 +202,8 @@ sub prune_snapshots {
 			unless ($type =~ /ly$/) { next; }
 
 			# we need to set the period length in seconds first
-			if ($type eq 'hourly') { $period = 60*60; }
+			if ($type eq 'frequently') { $period = 60 * $config{$section}{'frequent_period'}; }
+			elsif ($type eq 'hourly') { $period = 60*60; }
 			elsif ($type eq 'daily') { $period = 60*60*24; }
 			elsif ($type eq 'monthly') { $period = 60*60*24*31; }
 			elsif ($type eq 'yearly') { $period = 60*60*24*365.25; }
@@ -293,7 +296,18 @@ sub take_snapshots {
 				my @preferredtime;
 				my $lastpreferred;
 
-				if ($type eq 'hourly')     {
+				if ($type eq 'frequently')     {
+					my $frequentslice = int($datestamp{'min'} / $config{$section}{'frequent_period'});
+
+					push @preferredtime,0; # try to hit 0 seconds
+					push @preferredtime,$frequentslice * $config{$section}{'frequent_period'};
+					push @preferredtime,$datestamp{'hour'};
+					push @preferredtime,$datestamp{'mday'};
+					push @preferredtime,($datestamp{'mon'}-1); # january is month 0
+					push @preferredtime,$datestamp{'year'};
+					$lastpreferred = timelocal(@preferredtime);
+					if ($lastpreferred > time()) { $lastpreferred -= 60 * $config{$section}{'frequent_period'}; } # preferred time is later this frequent period - so look at last frequent period
+				} elsif ($type eq 'hourly')     {
 					push @preferredtime,0; # try to hit 0 seconds
 					push @preferredtime,$config{$section}{'hourly_min'};
 					push @preferredtime,$datestamp{'hour'};
@@ -338,6 +352,7 @@ sub take_snapshots {
 					# update to most current possible datestamp
 					%datestamp = get_date();
 					# print "we should have had a $type snapshot of $path $maxage seconds ago; most recent is $newestage seconds old.\n";
+<<<<<<< HEAD
 					my $snap = "$path\@autosnap_$datestamp{'sortable'}_$type";
 					push(@newsnaps, $snap);
 					if ($config{$section}{'prescript'})  {
@@ -345,6 +360,15 @@ sub take_snapshots {
 					}
 					if ($config{$section}{'postscript'}) {
 						$postscripts{$snap} = $config{$section}{'postscript'};
+=======
+					
+					# use zfs recursion if specified in config 
+					if ($config{$section}{'zfs_recursion'}) {
+						push(@newsnaps, "-r $path\@autosnap_$datestamp{'sortable'}_$type");
+
+					}else{
+						push(@newsnaps, "$path\@autosnap_$datestamp{'sortable'}_$type");
+>>>>>>> e9bbc0c9f455e9766ffd1451f33842698af689bb
 					}
 				}
 			}
@@ -362,7 +386,7 @@ sub take_snapshots {
 			}
 			if ($args{'verbose'}) { print "taking snapshot $snap\n"; }
 			if (!$args{'readonly'}) {
-				system($zfs, "snapshot", "$snap") == 0
+				system("$zfs snapshot $snap") == 0
 					or warn "CRITICAL ERROR: $zfs snapshot $snap failed, $?";
 				# make sure we don't end up with multiple snapshots with the same ctime
 				sleep 1;
@@ -578,6 +602,17 @@ sub init {
 	my @istrue=(1,"true","True","TRUE","yes","Yes","YES","on","On","ON");
 	my @isfalse=(0,"false","False","FALSE","no","No","NO","off","Off","OFF");
 
+	# check if default configuration file is up to date
+	my $defaults_version = 1;
+	if (defined $defaults{'version'}{'version'}) {
+		$defaults_version = $defaults{'version'}{'version'};
+		delete $defaults{'version'};
+	}
+
+	if ($defaults_version < $MINIMUM_DEFAULTS_VERSION) {
+		die "FATAL: you're using sanoid.defaults.conf v$defaults_version, this version of sanoid requires a minimum sanoid.defaults.conf v$MINIMUM_DEFAULTS_VERSION";
+	}
+
 	foreach my $section (keys %ini) {
 
 		# first up - die with honor if unknown parameters are set in any modules or templates by the user.
@@ -656,7 +691,10 @@ sub init {
 
 		# how 'bout some recursion? =)
 		my @datasets;
-		if ($ini{$section}{'recursive'}) {
+
+		if($ini{$section}{'recursive'} =~ /zfs/i) {
+			$config{$section}{'zfs_recursion'} = 1;				
+		}elsif ($ini{$section}{'recursive'}) {
 			@datasets = getchilddatasets($config{$section}{'path'});
 			foreach my $dataset(@datasets) {
 				chomp $dataset;
