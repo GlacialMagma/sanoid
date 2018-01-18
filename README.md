@@ -151,6 +151,10 @@ Syncoid supports recursive replication (replication of a dataset and all its chi
 
 	This prints a list of snapshots during the run.
 
++ --no-privilege-elevation
+
+	Bypass the root check and assume syncoid has the necessary permissions (for use with ZFS permission delegation).
+
 + --sshport
 
 	Allow sync to/from boxes running SSH on non-standard ports.
